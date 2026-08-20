@@ -618,6 +618,16 @@ const _F = (function() {
     } catch(e) { console.warn('[飞书] Token请求异常:', e.message); return null; }
   }
 
+  // 字段名 → 字段ID 映射
+  const FIELD_MAP = {
+    '议题': 'fld0Z7y3H2',
+    '沟通轮次': 'fldtPhXsY0',
+    '高管': 'fldI8VuVO5',
+    '对话内容': 'fldhzZSmLp',
+    '问题': 'fldslwsMJE',
+    '解决方案': 'fldKqut30l'
+  };
+
   async function _flush() {
     if (_busy || !_queue.length) return;
     _busy = true;
@@ -626,10 +636,19 @@ const _F = (function() {
     if (!token) { _busy = false; if (_queue.length) setTimeout(_flush, 5000); return; }
     try {
       const url = `https://tiny-moon-faeb.2311522749.workers.dev/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records/batch_create`;
+      // 将字段名转换为字段ID
+      const converted = batch.map(fields => {
+        const newFields = {};
+        for (const [key, value] of Object.entries(fields)) {
+          const fieldId = FIELD_MAP[key] || key;
+          newFields[fieldId] = value;
+        }
+        return { fields: newFields };
+      });
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records: batch.map(fields => ({ fields })) })
+        body: JSON.stringify({ records: converted })
       });
       const d = await r.json();
       if (d.code !== 0) console.warn('[飞书] 写入失败:', d.msg);
@@ -649,6 +668,10 @@ const _F = (function() {
     if (!_busy) setTimeout(_flush, 200);
   }
 
+  // 字段ID → 字段名 反向映射
+  const FIELD_ID_MAP = {};
+  for (const [name, id] of Object.entries(FIELD_MAP)) FIELD_ID_MAP[id] = name;
+
   async function readAll() {
     const all = [];
     let pageToken = '', page = 0;
@@ -661,7 +684,16 @@ const _F = (function() {
         const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
         const d = await r.json();
         if (d.code === 0 && d.data && d.data.items) {
-          all.push(...d.data.items);
+          // 将字段ID转回字段名，方便前端使用
+          const converted = d.data.items.map(item => {
+            const newFields = {};
+            for (const [key, value] of Object.entries(item.fields || {})) {
+              const name = FIELD_ID_MAP[key] || key;
+              newFields[name] = value;
+            }
+            return { ...item, fields: newFields };
+          });
+          all.push(...converted);
           pageToken = d.data.has_more ? (d.data.page_token || '') : '';
           page++;
         } else { console.warn('[飞书] 读取失败:', d.msg); break; }
@@ -2616,7 +2648,7 @@ async function startMeeting() {
     // 搁置/未解决问题，纳入最终报告
     const unresolvedIssues = [];
     // 后续问题：讨论过程中新发现的问题，攒起来等首轮处理完批量表决
-    const laterIssues = [];
+    let laterIssues = [];
     // 秘书长在本议题中的发言记录（供高管参考和回应）
     const secretarySpeeches = [];
 
