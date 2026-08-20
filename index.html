@@ -584,31 +584,54 @@ const DEFAULT_TEMPS = {
 
 const TAVILY_API_KEY = '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';
 
-// ===== 飞书多维表格 API 配置（云函数代理） =====
-const PROXY_URL = 'https://xiao-3gegli1c2afdd54f.api.tcloudbasegateway.com/v1/cloudrun/feishu_board';
+// ===== 飞书多维表格 API 配置（直连模式） =====
 const _F = (function() {
-  let _queue = [], _busy = false;
+  // 混淆存储：XOR key + base64 编码
+  const _k = 'BdSecret2026';
+  const _e = (s) => btoa(s.split('').map((c,i) => String.fromCharCode(c.charCodeAt(0) ^ _k.charCodeAt(i % _k.length))).join(''));
+  const _d = (s) => { const raw = atob(s); return raw.split('').map((c,i) => String.fromCharCode(c.charCodeAt(0) ^ _k.charCodeAt(i % _k.length))).join(''); };
+  const C = {
+    aid: _e('cli_aa0db4ddfcf8dd01'),
+    asc: _e('VdG1OqdRD2LEzfMQ7DCzmdWcWFcadtUB'),
+    bt: _e('Q5rPbfsoQazak6sMwDKcfmXonxf'),
+    tid: _e('tbl2fQF0fS3TqaWU')
+  };
+  const dec = (v) => _d(v);
+  let _token = '', _exp = 0, _queue = [], _busy = false;
 
-  async function _proxy(action, body) {
+  async function getToken() {
+    if (_token && Date.now() < _exp - 60000) return _token;
     try {
-      const r = await fetch(PROXY_URL, {
+      const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action, ...body })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: dec(C.aid), app_secret: dec(C.asc) })
       });
-      return await r.json();
-    } catch(e) {
-      console.warn('[飞书代理] 请求异常:', e.message);
-      return { code: -1, msg: e.message };
-    }
+      const d = await r.json();
+      if (d.code === 0 && d.tenant_access_token) {
+        _token = d.tenant_access_token;
+        _exp = Date.now() + (d.expire || 7200) * 1000;
+        return _token;
+      }
+      console.warn('[飞书] Token获取失败:', d.msg);
+      return null;
+    } catch(e) { console.warn('[飞书] Token请求异常:', e.message); return null; }
   }
 
   async function _flush() {
     if (_busy || !_queue.length) return;
     _busy = true;
     const batch = _queue.splice(0, 10);
+    const token = await getToken();
+    if (!token) { _busy = false; if (_queue.length) setTimeout(_flush, 5000); return; }
     try {
-      const d = await _proxy('write', { records: batch.map(fields => ({ fields })) });
+      const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records/batch_create`;
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: batch.map(fields => ({ fields })) })
+      });
+      const d = await r.json();
       if (d.code !== 0) console.warn('[飞书] 写入失败:', d.msg);
       else console.log('[飞书] 成功写入', batch.length, '条记录');
     } catch(e) { console.warn('[飞书] 批量写入异常:', e.message); }
@@ -627,16 +650,28 @@ const _F = (function() {
   }
 
   async function readAll() {
+    const all = [];
+    let pageToken = '', page = 0;
     try {
-      const d = await _proxy('read', {});
-      if (d.code === 0 && d.data && d.data.records) return d.data.records;
-      if (d.code === 0 && Array.isArray(d.data)) return d.data;
-      console.warn('[飞书] 读取失败:', d.msg);
-      return [];
-    } catch(e) { console.warn('[飞书] 读取异常:', e.message); return []; }
+      do {
+        let url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${dec(C.bt)}/tables/${dec(C.tid)}/records?page_size=100`;
+        if (pageToken) url += '&page_token=' + encodeURIComponent(pageToken);
+        const token = await getToken();
+        if (!token) break;
+        const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+        const d = await r.json();
+        if (d.code === 0 && d.data && d.data.items) {
+          all.push(...d.data.items);
+          pageToken = d.data.has_more ? (d.data.page_token || '') : '';
+          page++;
+        } else { console.warn('[飞书] 读取失败:', d.msg); break; }
+        if (page > 20) break;
+      } while (pageToken);
+    } catch(e) { console.warn('[飞书] 读取异常:', e.message); }
+    return all;
   }
 
-  return { write, writeNow, readAll };
+  return { write, writeNow, getToken, readAll };
 })();
 
 // ===== 飞书历史记录恢复 =====
